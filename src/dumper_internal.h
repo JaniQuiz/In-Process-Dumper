@@ -53,6 +53,7 @@ bool ShouldDumpModules();
 bool ShouldDumpUnityMetadata();
 bool ShouldWatchUnityMetadataFile();
 bool ShouldInlineWatchUnityMetadataFile();
+bool ShouldDumpUnityMetadataFromDmp();
 
 std::wstring BuildDumpPath();
 std::wstring BuildLogPath(const std::wstring& dumpPath);
@@ -87,6 +88,7 @@ bool WriteImageMemoryAt(
 void DumpExecutableRegions(const std::wstring& dumpPath, const std::wstring& logPath, bool aggressiveRead);
 void DumpLoadedModules(const std::wstring& dumpPath, const std::wstring& logPath, bool aggressiveRead);
 DWORD DumpUnityMetadata(const std::wstring& dumpPath, const std::wstring& logPath, bool aggressiveRead);
+DWORD DumpUnityMetadataFromDmp(const std::wstring& dumpPath, const std::wstring& logPath);
 void InstallUnityMetadataFileWatch(const std::wstring& logPath);
 void RefreshUnityMetadataFileWatch(const std::wstring& logPath);
 DWORD DumpWatchedUnityMetadataBuffers(const std::wstring& dumpPath, const std::wstring& logPath, bool aggressiveRead);

@@ -56,10 +56,14 @@ Example:
   "exe_name": "",
   "log_name": "",
   "dump_delay_seconds": 0,
+  "unity_metadata_scan_seconds": 0,
   "dump_flags": "0x00001026",
   "write_exe": true,
   "dump_modules": true,
   "dump_unity_metadata": true,
+  "dump_unity_metadata_from_dmp": true,
+  "watch_unity_metadata_file": false,
+  "inline_watch_unity_metadata_file": false,
   "aggressive_read": true,
   "dump_exec_regions": true,
   "unload": true
@@ -73,11 +77,15 @@ Example:
 | `exe_name` | `IPD_EXE_NAME` | Full reconstructed EXE path. Defaults to `<process>_dump.exe`. |
 | `write_exe` | `IPD_WRITE_EXE` | Set to `false` to skip reconstructed EXE output. Defaults to enabled. |
 | `dump_modules` | `IPD_DUMP_MODULES` | Set to `true` to reconstruct loaded DLL modules to `<process>_dump.modules\*_dump.dll`. Defaults to enabled. |
-| `dump_unity_metadata` | `IPD_DUMP_UNITY_METADATA` | Set to `true` to scan memory for Unity IL2CPP `global-metadata.dat` and write it to `<process>_dump.unity_metadata\global-metadata_dump.dat`. Defaults to enabled. |
+| `dump_unity_metadata` | `IPD_DUMP_UNITY_METADATA` | Master switch for Unity IL2CPP metadata output. Defaults to enabled. |
+| `dump_unity_metadata_from_dmp` | `IPD_DUMP_UNITY_METADATA_FROM_DMP` | Set to `true` to extract `global-metadata.dat` from the saved full-memory DMP after `MiniDumpWriteDump` completes. Defaults to enabled. |
+| `watch_unity_metadata_file` | `IPD_WATCH_UNITY_METADATA_FILE` | Set to `true` to hook metadata file open/read APIs and dump the read buffer when `global-metadata.dat` is seen. Defaults to disabled. |
+| `inline_watch_unity_metadata_file` | `IPD_INLINE_WATCH_UNITY_METADATA_FILE` | Set to `true` to patch `NtCreateFile`, `NtOpenFile`, and `NtReadFile` inline for metadata file watching. Defaults to disabled. |
 | `aggressive_read` | `IPD_AGGRESSIVE_READ` | Set to `true` to temporarily change committed unreadable page protections while reconstructing the EXE and loaded DLLs. |
 | `dump_exec_regions` | `IPD_DUMP_EXEC_REGIONS` | Set to `true` to dump executable `MEM_PRIVATE` and `MEM_MAPPED` regions outside the main module to `<process>_dump.exec_regions\*.bin`. |
 | `log_name` | `IPD_LOG_NAME` | Full log file path. Defaults to `<process>_dump.log.txt`. |
 | `dump_delay_seconds` | `IPD_DUMP_DELAY_SECONDS` | Seconds to wait after the dumper starts before writing dump output. Defaults to `0`. |
+| `unity_metadata_scan_seconds` | `IPD_UNITY_METADATA_SCAN_SECONDS` | Seconds for legacy runtime metadata scanning when `dump_unity_metadata_from_dmp` is disabled. |
 | `dump_flags` | `IPD_DUMP_FLAGS` | Numeric `MINIDUMP_TYPE` flags, decimal or hex. Defaults to full memory, handles, thread info, and unloaded modules. |
 | `unload` | `IPD_UNLOAD` | Set to `false` to keep the DLL loaded after dumping. Defaults to unload. |
 
@@ -120,8 +128,12 @@ Loaded DLLs are reconstructed from their in-memory `MEM_IMAGE` mappings when
 `dump_modules` is enabled. This is useful when tools such as IDA ask for imported
 DLLs while analyzing the reconstructed EXE.
 
-Unity IL2CPP metadata is scanned from committed readable memory when
-`dump_unity_metadata` is enabled. Candidates are validated with the
-`global-metadata.dat` magic, metadata version, and header offset/size table
-before being written. If the metadata spans protected pages, `aggressive_read`
-can temporarily relax protections and retry the read.
+Unity IL2CPP metadata is extracted from the saved full-memory DMP when
+`dump_unity_metadata` and `dump_unity_metadata_from_dmp` are enabled. The dumper
+parses `Memory64ListStream`, scans dumped memory ranges for the
+`global-metadata.dat` header, validates the metadata version and offset/size
+table, then writes candidates to
+`<process>_dump.unity_metadata\global-metadata_dmp.dat`.
+
+If `dump_unity_metadata_from_dmp` is disabled, the older runtime memory scan and
+optional file-read watch path are used instead.

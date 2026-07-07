@@ -626,5 +626,9 @@ bool ShouldInlineWatchUnityMetadataFile() {
     return ParseBoolSetting(GetSettingString(L"IPD_INLINE_WATCH_UNITY_METADATA_FILE", L"inline_watch_unity_metadata_file"), false);
 }
 
+bool ShouldDumpUnityMetadataFromDmp() {
+    return ParseBoolSetting(GetSettingString(L"IPD_DUMP_UNITY_METADATA_FROM_DMP", L"dump_unity_metadata_from_dmp"), true);
+}
+
 }  // namespace ipd
 

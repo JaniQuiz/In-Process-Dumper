@@ -205,6 +205,21 @@ void ScanUnityMetadataWindow(const DumpContext& context) {
     } while (true);
 }
 
+void DumpUnityMetadataFromSavedDmpIfConfigured(const DumpContext& context, DWORD dumpError) {
+    if (!ShouldDumpUnityMetadata() || !ShouldDumpUnityMetadataFromDmp()) {
+        return;
+    }
+
+    if (dumpError != ERROR_SUCCESS) {
+        Log(context.logPath, L"Skipping DMP metadata extraction because dump failed. error=" + std::to_wstring(dumpError));
+        return;
+    }
+
+    if (DumpUnityMetadataFromDmp(context.dumpPath, context.logPath) == 0) {
+        Log(context.logPath, L"No Unity metadata was extracted from saved DMP.");
+    }
+}
+
 DWORD RunDumpWorkflow(
     const DumpContext& context,
     const wchar_t* startMessage,
@@ -220,11 +235,9 @@ DWORD RunDumpWorkflow(
         Sleep(delaySeconds * 1000);
     }
 
-    if (ShouldDumpUnityMetadata()) {
-        ScanUnityMetadataWindow(context);
-    }
-
     DWORD dumpError = WriteConfiguredDump(context);
+    DumpUnityMetadataFromSavedDmpIfConfigured(context, dumpError);
+
     DWORD exeError = WriteConfiguredExe(context);
 
     if (ShouldDumpExecutableRegions()) {
@@ -233,6 +246,10 @@ DWORD RunDumpWorkflow(
 
     if (ShouldDumpModules()) {
         DumpLoadedModules(context.dumpPath, context.logPath, context.aggressiveRead);
+    }
+
+    if (ShouldDumpUnityMetadata() && !ShouldDumpUnityMetadataFromDmp()) {
+        ScanUnityMetadataWindow(context);
     }
 
     WriteStatusFile(context.dumpPath, dumpError, context.exePath, exeError);
