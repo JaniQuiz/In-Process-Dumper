@@ -9,7 +9,7 @@
   "write_exe": true,
   "dump_modules": true,
   "dump_unity_metadata": true,
-  "dump_unity_metadata_from_dmp": true,
+  "dump_unity_metadata_from_dmp": false,
   "watch_unity_metadata_file": false,
   "inline_watch_unity_metadata_file": false,
   "aggressive_read": true,
