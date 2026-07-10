@@ -248,6 +248,10 @@ DWORD RunDumpWorkflow(
         DumpLoadedModules(context.dumpPath, context.logPath, context.aggressiveRead);
     }
 
+    if (ShouldDumpAesKey()) {
+        DumpUnrealAesKeys(context.dumpPath, context.logPath, context.aggressiveRead);
+    }
+
     if (ShouldDumpUnityMetadata() && !ShouldDumpUnityMetadataFromDmp()) {
         ScanUnityMetadataWindow(context);
     }

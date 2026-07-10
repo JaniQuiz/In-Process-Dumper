@@ -8,6 +8,8 @@
   "dump_flags": "0x00001026",
   "write_exe": true,
   "dump_modules": true,
+  "dump_aes_key": true,
+  "aes_key_min_entropy": 3.0,
   "dump_unity_metadata": true,
   "dump_unity_metadata_from_dmp": false,
   "watch_unity_metadata_file": false,

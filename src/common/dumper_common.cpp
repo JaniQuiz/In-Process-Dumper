@@ -594,6 +594,25 @@ DWORD ParseUnityMetadataScanSeconds() {
     return static_cast<DWORD>(seconds);
 }
 
+double ParseAesKeyMinimumEntropy() {
+    std::wstring value = GetSettingString(L"IPD_AES_KEY_MIN_ENTROPY", L"aes_key_min_entropy");
+    if (value.empty()) {
+        return 3.0;
+    }
+
+    wchar_t* end = nullptr;
+    double entropy = wcstod(value.c_str(), &end);
+    if (end == value.c_str() || entropy < 0.0) {
+        return 3.0;
+    }
+
+    if (entropy > 4.0) {
+        return 4.0;
+    }
+
+    return entropy;
+}
+
 bool ShouldUnload() {
     return ParseBoolSetting(GetSettingString(L"IPD_UNLOAD", L"unload"), true);
 }
@@ -628,6 +647,10 @@ bool ShouldInlineWatchUnityMetadataFile() {
 
 bool ShouldDumpUnityMetadataFromDmp() {
     return ParseBoolSetting(GetSettingString(L"IPD_DUMP_UNITY_METADATA_FROM_DMP", L"dump_unity_metadata_from_dmp"), true);
+}
+
+bool ShouldDumpAesKey() {
+    return ParseBoolSetting(GetSettingString(L"IPD_DUMP_AES_KEY", L"dump_aes_key"), false);
 }
 
 }  // namespace ipd

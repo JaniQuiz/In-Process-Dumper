@@ -60,6 +60,8 @@ Example:
   "dump_flags": "0x00001026",
   "write_exe": true,
   "dump_modules": true,
+  "dump_aes_key": false,
+  "aes_key_min_entropy": 3.0,
   "dump_unity_metadata": true,
   "dump_unity_metadata_from_dmp": true,
   "watch_unity_metadata_file": false,
@@ -77,6 +79,8 @@ Example:
 | `exe_name` | `IPD_EXE_NAME` | Full reconstructed EXE path. Defaults to `<process>_dump.exe`. |
 | `write_exe` | `IPD_WRITE_EXE` | Set to `false` to skip reconstructed EXE output. Defaults to enabled. |
 | `dump_modules` | `IPD_DUMP_MODULES` | Set to `true` to reconstruct loaded DLL modules to `<process>_dump.modules\*_dump.dll`. Defaults to enabled. |
+| `dump_aes_key` | `IPD_DUMP_AES_KEY` | Set to `true` to scan Unreal `.text` and `.rdata` sections for AES key initialization patterns and write results to `<process>_dump.aes_keys\aes_keys.json`. Defaults to disabled. |
+| `aes_key_min_entropy` | `IPD_AES_KEY_MIN_ENTROPY` | Minimum entropy for Unreal AES key candidates. Lower values output more candidates. Defaults to `3.0`. |
 | `dump_unity_metadata` | `IPD_DUMP_UNITY_METADATA` | Master switch for Unity IL2CPP metadata output. Defaults to enabled. |
 | `dump_unity_metadata_from_dmp` | `IPD_DUMP_UNITY_METADATA_FROM_DMP` | Set to `true` to extract `global-metadata.dat` from the saved full-memory DMP after `MiniDumpWriteDump` completes. Defaults to enabled. |
 | `watch_unity_metadata_file` | `IPD_WATCH_UNITY_METADATA_FILE` | Set to `true` to hook metadata file open/read APIs and dump the read buffer when `global-metadata.dat` is seen. Defaults to disabled. |
@@ -137,3 +141,7 @@ table, then writes candidates to
 
 If `dump_unity_metadata_from_dmp` is disabled, the older runtime memory scan and
 optional file-read watch path are used instead.
+
+
+## Acknowledgements
+I implemented the AES Dumper functionality using the code from this repository: https://github.com/chadlrnsn/aes-dumper-rs

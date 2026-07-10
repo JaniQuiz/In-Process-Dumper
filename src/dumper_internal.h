@@ -42,6 +42,7 @@ DWORD AlignUp(DWORD value, DWORD alignment);
 DWORD ParseDumpFlags();
 DWORD ParseDumpDelaySeconds();
 DWORD ParseUnityMetadataScanSeconds();
+double ParseAesKeyMinimumEntropy();
 bool IsReadableMemory(const MEMORY_BASIC_INFORMATION& mbi);
 bool ReadMemoryBlock(const BYTE* source, void* buffer, DWORD size, bool aggressiveRead, SIZE_T* bytesRead);
 
@@ -54,6 +55,7 @@ bool ShouldDumpUnityMetadata();
 bool ShouldWatchUnityMetadataFile();
 bool ShouldInlineWatchUnityMetadataFile();
 bool ShouldDumpUnityMetadataFromDmp();
+bool ShouldDumpAesKey();
 
 std::wstring BuildDumpPath();
 std::wstring BuildLogPath(const std::wstring& dumpPath);
@@ -92,6 +94,7 @@ DWORD DumpUnityMetadataFromDmp(const std::wstring& dumpPath, const std::wstring&
 void InstallUnityMetadataFileWatch(const std::wstring& logPath);
 void RefreshUnityMetadataFileWatch(const std::wstring& logPath);
 DWORD DumpWatchedUnityMetadataBuffers(const std::wstring& dumpPath, const std::wstring& logPath, bool aggressiveRead);
+DWORD DumpUnrealAesKeys(const std::wstring& dumpPath, const std::wstring& logPath, bool aggressiveRead);
 
 DumpContext CreateDumpContext();
 DWORD RunDumpWorkflow(
