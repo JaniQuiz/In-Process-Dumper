@@ -593,7 +593,7 @@ DWORD ParseDumpKey() {
     char keyName[256] = {};
     LONG lParamValue = MapVirtualKeyA(dumpKey, MAPVK_VK_TO_VSC) << 16;
     if (GetKeyNameTextA(lParamValue, keyName, sizeof(keyName)) != 0) {
-        printf("Press %s to begin dump.", keyName);
+        printf("Press %s to begin dump\n", keyName);
     }
     return static_cast<DWORD>(dumpKey);
 }
