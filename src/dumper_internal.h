@@ -41,6 +41,7 @@ std::wstring BuildUniqueFilePath(const std::wstring& directory, const std::wstri
 DWORD AlignUp(DWORD value, DWORD alignment);
 DWORD ParseDumpFlags();
 DWORD ParseDumpDelaySeconds();
+DWORD ParseDumpKey();
 DWORD ParseUnityMetadataScanSeconds();
 double ParseAesKeyMinimumEntropy();
 bool IsReadableMemory(const MEMORY_BASIC_INFORMATION& mbi);
