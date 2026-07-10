@@ -11,7 +11,7 @@
 namespace ipd {
 namespace {
 
-constexpr SIZE_T kMaxSectionSize = 100 * 1024 * 1024;
+constexpr SIZE_T kScanChunkSize = 16 * 1024 * 1024;
 
 struct PatternByte {
     bool wildcard = false;
@@ -34,6 +34,11 @@ struct TargetSection {
     std::wstring name;
     const BYTE* base = nullptr;
     DWORD size = 0;
+};
+
+struct ParsedKeyPattern {
+    std::vector<PatternByte> bytes;
+    std::array<SIZE_T, 8> dwordOffsets{};
 };
 
 constexpr KeyPattern kKeyPatterns[] = {
@@ -121,6 +126,29 @@ std::vector<PatternByte> ParsePattern(const char* signature) {
     }
 
     return pattern;
+}
+
+const std::vector<ParsedKeyPattern>& ParsedKeyPatterns() {
+    static std::vector<ParsedKeyPattern> patterns;
+    if (!patterns.empty()) {
+        return patterns;
+    }
+
+    for (const KeyPattern& keyPattern : kKeyPatterns) {
+        patterns.push_back({ParsePattern(keyPattern.signature), keyPattern.dwordOffsets});
+    }
+
+    return patterns;
+}
+
+SIZE_T MaxPatternSize() {
+    SIZE_T maxSize = 0;
+    for (const ParsedKeyPattern& pattern : ParsedKeyPatterns()) {
+        if (pattern.bytes.size() > maxSize) {
+            maxSize = pattern.bytes.size();
+        }
+    }
+    return maxSize;
 }
 
 std::wstring SectionName(const IMAGE_SECTION_HEADER& section) {
@@ -245,7 +273,7 @@ double CalculateEntropy(const std::string& keyHex) {
     return entropy;
 }
 
-std::string ExtractKeyHex(const BYTE* data, SIZE_T dataSize, SIZE_T patternOffset, const KeyPattern& keyPattern) {
+std::string ExtractKeyHex(const BYTE* data, SIZE_T dataSize, SIZE_T patternOffset, const ParsedKeyPattern& keyPattern) {
     static constexpr char kHex[] = "0123456789ABCDEF";
 
     std::string keyHex;
@@ -269,15 +297,30 @@ std::string ExtractKeyHex(const BYTE* data, SIZE_T dataSize, SIZE_T patternOffse
 void ScanSectionForKeys(
     const TargetSection& section,
     const std::vector<BYTE>& data,
+    SIZE_T sectionOffset,
+    SIZE_T scanLimit,
     double minimumEntropy,
-    std::vector<AesKeyCandidate>* keys) {
-    for (const KeyPattern& keyPattern : kKeyPatterns) {
-        std::vector<PatternByte> pattern = ParsePattern(keyPattern.signature);
-        if (pattern.empty() || data.size() < pattern.size()) {
+    std::vector<AesKeyCandidate>* keys,
+    ULONGLONG* candidatesExamined) {
+    for (const ParsedKeyPattern& keyPattern : ParsedKeyPatterns()) {
+        const std::vector<PatternByte>& pattern = keyPattern.bytes;
+        if (pattern.empty() || data.size() < pattern.size() || scanLimit < pattern.size()) {
             continue;
         }
 
-        for (SIZE_T offset = 0; offset + pattern.size() <= data.size(); ++offset) {
+        for (SIZE_T offset = 0; offset + pattern.size() <= data.size() && offset < scanLimit; ++offset) {
+            const void* firstMatch = std::memchr(data.data() + offset, pattern[0].value, scanLimit - offset);
+            if (firstMatch == nullptr) {
+                break;
+            }
+
+            offset = static_cast<const BYTE*>(firstMatch) - data.data();
+            if (offset + pattern.size() > data.size()) {
+                break;
+            }
+
+            ++(*candidatesExamined);
+
             bool matched = true;
             for (SIZE_T i = 0; i < pattern.size(); ++i) {
                 if (!pattern[i].wildcard && data[offset + i] != pattern[i].value) {
@@ -299,9 +342,139 @@ void ScanSectionForKeys(
                 continue;
             }
 
-            keys->push_back({keyHex, section.base + offset, section.name, entropy});
+            keys->push_back({keyHex, section.base + sectionOffset + offset, section.name, entropy});
         }
     }
+}
+
+bool ScanSectionChunks(
+    const TargetSection& section,
+    bool aggressiveRead,
+    double minimumEntropy,
+    const std::wstring& logPath,
+    std::vector<AesKeyCandidate>* keys,
+    ULONGLONG* scannedBytes) {
+    SIZE_T overlap = MaxPatternSize();
+    if (overlap > 0) {
+        --overlap;
+    }
+
+    DWORD chunkCount = static_cast<DWORD>((static_cast<ULONGLONG>(section.size) + kScanChunkSize - 1) / kScanChunkSize);
+    ULONGLONG sectionStartTick = GetTickCount64();
+    ULONGLONG candidatesExamined = 0;
+    size_t keysBefore = keys->size();
+
+    SIZE_T offset = 0;
+    DWORD chunkIndex = 0;
+    while (offset < section.size) {
+        SIZE_T remaining = section.size - offset;
+        SIZE_T readSize = remaining > kScanChunkSize ? kScanChunkSize : remaining;
+        if (remaining > readSize) {
+            readSize = std::min<SIZE_T>(remaining, readSize + overlap);
+        }
+        if (readSize > MAXDWORD) {
+            readSize = MAXDWORD;
+        }
+
+        const BYTE* chunkBase = section.base + offset;
+
+        MEMORY_BASIC_INFORMATION mbi{};
+        SIZE_T queried = VirtualQuery(chunkBase, &mbi, sizeof(mbi));
+        Log(
+            logPath,
+            L"unreal_aes chunk_begin section=" + section.name +
+                L" chunk=" + std::to_wstring(chunkIndex) + L"/" + std::to_wstring(chunkCount) +
+                L" offset=" + std::to_wstring(offset) +
+                L" size=" + std::to_wstring(readSize) +
+                L" base=" + FormatHexPtr(chunkBase) +
+                L" mbi_state=" + FormatHex(queried != 0 ? mbi.State : 0) +
+                L" mbi_protect=" + FormatHex(queried != 0 ? mbi.Protect : 0) +
+                L" mbi_region_size=" + std::to_wstring(queried != 0 ? mbi.RegionSize : 0));
+
+        ULONGLONG readStartTick = GetTickCount64();
+        std::vector<BYTE> data(readSize);
+        SIZE_T bytesRead = 0;
+        if (!ReadMemoryBlock(chunkBase, data.data(), static_cast<DWORD>(readSize), aggressiveRead, &bytesRead)) {
+            // ReadMemoryBlock returning false here is not a Win32 API failure: it means it
+            // deliberately refused to touch a protected (e.g. PAGE_NOACCESS canary) region. Do
+            // not log GetLastError()/FormatWin32Error() for this - that value is stale/unrelated
+            // and was previously misread as a real file/IO error.
+            //
+            // ReadMemoryBlock stops at the first region it cannot (safely) read, and reports
+            // how far it got via bytesRead. Rather than discarding the whole kScanChunkSize
+            // chunk, scan the prefix that was actually read, then hop over only the offending
+            // region (queried fresh) instead of blindly skipping kScanChunkSize bytes.
+            SIZE_T failOffset = offset + bytesRead;
+            const BYTE* failAddr = section.base + failOffset;
+            MEMORY_BASIC_INFORMATION failMbi{};
+            SIZE_T failQueried = VirtualQuery(failAddr, &failMbi, sizeof(failMbi));
+            SIZE_T skipBytes = kScanChunkSize;
+            if (failQueried != 0) {
+                const auto* regionEnd = reinterpret_cast<const BYTE*>(failMbi.BaseAddress) + failMbi.RegionSize;
+                if (regionEnd > failAddr) {
+                    skipBytes = static_cast<SIZE_T>(regionEnd - failAddr);
+                }
+            }
+
+            Log(
+                logPath,
+                L"unreal_aes skip_unreadable section=" + section.name +
+                    L" chunk=" + std::to_wstring(chunkIndex) +
+                    L" base=" + FormatHexPtr(chunkBase) +
+                    L" size=" + std::to_wstring(readSize) +
+                    L" fail_addr=" + FormatHexPtr(failAddr) +
+                    L" fail_mbi_state=" + FormatHex(failQueried != 0 ? failMbi.State : 0) +
+                    L" fail_mbi_protect=" + FormatHex(failQueried != 0 ? failMbi.Protect : 0) +
+                    L" bytes_before_fail=" + std::to_wstring(bytesRead) +
+                    L" skip_bytes=" + std::to_wstring(skipBytes) +
+                    L" read_ms=" + std::to_wstring(GetTickCount64() - readStartTick));
+
+            if (bytesRead > 0) {
+                data.resize(bytesRead);
+                *scannedBytes += bytesRead;
+                ScanSectionForKeys(section, data, offset, bytesRead, minimumEntropy, keys, &candidatesExamined);
+            }
+
+            offset = failOffset + skipBytes;
+            ++chunkIndex;
+            continue;
+        }
+        ULONGLONG readElapsedMs = GetTickCount64() - readStartTick;
+
+        data.resize(bytesRead);
+        *scannedBytes += bytesRead;
+
+        SIZE_T scanLimit = bytesRead;
+        if (remaining > kScanChunkSize && scanLimit > overlap) {
+            scanLimit -= overlap;
+        }
+
+        ULONGLONG scanStartTick = GetTickCount64();
+        ScanSectionForKeys(section, data, offset, scanLimit, minimumEntropy, keys, &candidatesExamined);
+        ULONGLONG scanElapsedMs = GetTickCount64() - scanStartTick;
+
+        Log(
+            logPath,
+            L"unreal_aes chunk_end section=" + section.name +
+                L" chunk=" + std::to_wstring(chunkIndex) + L"/" + std::to_wstring(chunkCount) +
+                L" bytes_read=" + std::to_wstring(bytesRead) +
+                L" read_ms=" + std::to_wstring(readElapsedMs) +
+                L" scan_ms=" + std::to_wstring(scanElapsedMs) +
+                L" candidates=" + std::to_wstring(candidatesExamined) +
+                L" keys_found=" + std::to_wstring(keys->size() - keysBefore));
+
+        offset += kScanChunkSize;
+        ++chunkIndex;
+    }
+
+    Log(
+        logPath,
+        L"unreal_aes section_end section=" + section.name +
+            L" total_ms=" + std::to_wstring(GetTickCount64() - sectionStartTick) +
+            L" candidates=" + std::to_wstring(candidatesExamined) +
+            L" keys_found=" + std::to_wstring(keys->size() - keysBefore));
+
+    return true;
 }
 
 bool GetMainModuleTargetSections(std::vector<TargetSection>* sections, std::wstring* errorMessage) {
@@ -338,8 +511,7 @@ bool GetMainModuleTargetSections(std::vector<TargetSection>* sections, std::wstr
             continue;
         }
 
-        SIZE_T cappedSize = std::min<SIZE_T>(size, kMaxSectionSize);
-        sections->push_back({name, base + section->VirtualAddress, static_cast<DWORD>(cappedSize)});
+        sections->push_back({name, base + section->VirtualAddress, size});
     }
 
     if (sections->empty()) {
@@ -347,20 +519,6 @@ bool GetMainModuleTargetSections(std::vector<TargetSection>* sections, std::wstr
         return false;
     }
 
-    return true;
-}
-
-bool ReadSectionBytes(const TargetSection& section, bool aggressiveRead, std::vector<BYTE>* data, DWORD* error) {
-    data->assign(section.size, 0);
-    SIZE_T bytesRead = 0;
-    if (!ReadMemoryBlock(section.base, data->data(), section.size, aggressiveRead, &bytesRead)) {
-        *error = GetLastError();
-        data->clear();
-        return false;
-    }
-
-    data->resize(bytesRead);
-    *error = ERROR_SUCCESS;
     return true;
 }
 
@@ -442,20 +600,7 @@ DWORD DumpUnrealAesKeys(const std::wstring& dumpPath, const std::wstring& logPat
                 L" base=" + FormatHexPtr(section.base) +
                 L" size=" + std::to_wstring(section.size));
 
-        std::vector<BYTE> data;
-        DWORD error = ERROR_SUCCESS;
-        if (!ReadSectionBytes(section, aggressiveRead, &data, &error)) {
-            Log(
-                logPath,
-                L"unreal_aes failed_read section=" + section.name +
-                    L" base=" + FormatHexPtr(section.base) +
-                    L" error=" + std::to_wstring(error) +
-                    L" " + FormatWin32Error(error));
-            continue;
-        }
-
-        scannedBytes += data.size();
-        ScanSectionForKeys(section, data, minimumEntropy, &keys);
+        ScanSectionChunks(section, aggressiveRead, minimumEntropy, logPath, &keys, &scannedBytes);
     }
 
     for (size_t i = 0; i < keys.size(); ++i) {

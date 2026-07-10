@@ -625,6 +625,15 @@ bool ShouldAggressivelyReadMemory() {
     return ParseBoolSetting(GetSettingString(L"IPD_AGGRESSIVE_READ", L"aggressive_read"), false);
 }
 
+bool ShouldForceReadNoAccessMemory() {
+    // PAGE_NOACCESS regions are sometimes planted deliberately (e.g. anti-tamper canaries) and
+    // forcing them open with VirtualProtect has been observed to freeze the host process.
+    // Default to leaving them alone; opt in explicitly if a target requires it.
+    static const bool value =
+        ParseBoolSetting(GetSettingString(L"IPD_AGGRESSIVE_READ_FORCE_NOACCESS", L"aggressive_read_force_noaccess"), false);
+    return value;
+}
+
 bool ShouldDumpExecutableRegions() {
     return ParseBoolSetting(GetSettingString(L"IPD_DUMP_EXEC_REGIONS", L"dump_exec_regions"), false);
 }

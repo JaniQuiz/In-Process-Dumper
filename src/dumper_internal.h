@@ -49,6 +49,7 @@ bool ReadMemoryBlock(const BYTE* source, void* buffer, DWORD size, bool aggressi
 bool ShouldUnload();
 bool ShouldWriteReconstructedExe();
 bool ShouldAggressivelyReadMemory();
+bool ShouldForceReadNoAccessMemory();
 bool ShouldDumpExecutableRegions();
 bool ShouldDumpModules();
 bool ShouldDumpUnityMetadata();

@@ -112,6 +112,7 @@ void LogDumpContext(const DumpContext& context, bool includeProcessId, bool incl
         Log(context.logPath, L"dump_flags=" + FormatHex(context.flags));
     }
     Log(context.logPath, L"aggressive_read=" + std::to_wstring(context.aggressiveRead ? 1 : 0));
+    Log(context.logPath, L"aggressive_read_force_noaccess=" + std::to_wstring(ShouldForceReadNoAccessMemory() ? 1 : 0));
 }
 
 DWORD WriteConfiguredDump(const DumpContext& context) {

@@ -15,6 +15,7 @@
   "watch_unity_metadata_file": false,
   "inline_watch_unity_metadata_file": false,
   "aggressive_read": true,
+  "aggressive_read_force_noaccess": false,
   "dump_exec_regions": true,
   "unload": true
 }

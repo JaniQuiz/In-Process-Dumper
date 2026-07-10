@@ -67,6 +67,7 @@ Example:
   "watch_unity_metadata_file": false,
   "inline_watch_unity_metadata_file": false,
   "aggressive_read": true,
+  "aggressive_read_force_noaccess": false,
   "dump_exec_regions": true,
   "unload": true
 }
@@ -86,6 +87,7 @@ Example:
 | `watch_unity_metadata_file` | `IPD_WATCH_UNITY_METADATA_FILE` | Set to `true` to hook metadata file open/read APIs and dump the read buffer when `global-metadata.dat` is seen. Defaults to disabled. |
 | `inline_watch_unity_metadata_file` | `IPD_INLINE_WATCH_UNITY_METADATA_FILE` | Set to `true` to patch `NtCreateFile`, `NtOpenFile`, and `NtReadFile` inline for metadata file watching. Defaults to disabled. |
 | `aggressive_read` | `IPD_AGGRESSIVE_READ` | Set to `true` to temporarily change committed unreadable page protections while reconstructing the EXE and loaded DLLs. |
+| `aggressive_read_force_noaccess` | `IPD_AGGRESSIVE_READ_FORCE_NOACCESS` | Only relevant when `aggressive_read` is enabled. `PAGE_GUARD` pages are always safe to force through (the guard bit clears itself on first touch), but `PAGE_NOACCESS` regions are sometimes planted deliberately as anti-tamper canaries, and forcing them open with `VirtualProtect` has been observed to freeze the target process entirely. Defaults to `false`, so `PAGE_NOACCESS` regions are skipped instead of forced open. Set to `true` only for targets known not to react badly to it. |
 | `dump_exec_regions` | `IPD_DUMP_EXEC_REGIONS` | Set to `true` to dump executable `MEM_PRIVATE` and `MEM_MAPPED` regions outside the main module to `<process>_dump.exec_regions\*.bin`. |
 | `log_name` | `IPD_LOG_NAME` | Full log file path. Defaults to `<process>_dump.log.txt`. |
 | `dump_delay_seconds` | `IPD_DUMP_DELAY_SECONDS` | Seconds to wait after the dumper starts before writing dump output. Defaults to `0`. |

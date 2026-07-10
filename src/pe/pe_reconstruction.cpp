@@ -373,23 +373,72 @@ std::wstring MemoryTypeName(DWORD type) {
 }
 
 bool ReadMemoryBlock(const BYTE* source, void* buffer, DWORD size, bool aggressiveRead, SIZE_T* bytesRead) {
-    MEMORY_BASIC_INFORMATION mbi{};
-    SIZE_T querySize = VirtualQuery(source, &mbi, sizeof(mbi));
-    if (querySize == 0) {
-        *bytesRead = 0;
-        return false;
+    // VirtualProtect over a large span (megabytes) of live, possibly-executing code has been
+    // observed to freeze the host process entirely (anti-cheat reacting to the protection
+    // change, or the OS serializing the icache flush across all threads). CountMemoryBytes()
+    // and WriteImageMemoryAt() avoid this by only ever touching protection in small
+    // kProtectChunkSize steps; do the same here instead of flipping the whole request in one
+    // VirtualProtect call.
+    constexpr SIZE_T kProtectChunkSize = 64 * 1024;
+
+    auto* out = static_cast<BYTE*>(buffer);
+    SIZE_T total = 0;
+    const BYTE* current = source;
+
+    while (total < size) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        SIZE_T queried = VirtualQuery(current, &mbi, sizeof(mbi));
+        if (queried == 0) {
+            *bytesRead = total;
+            return false;
+        }
+
+        const auto* regionEnd = reinterpret_cast<const BYTE*>(mbi.BaseAddress) + mbi.RegionSize;
+        SIZE_T regionRemaining = regionEnd > current ? static_cast<SIZE_T>(regionEnd - current) : (size - total);
+        if (regionRemaining > size - total) {
+            regionRemaining = size - total;
+        }
+        if (regionRemaining == 0) {
+            *bytesRead = total;
+            return false;
+        }
+
+        bool readable = IsReadableMemory(mbi);
+        // PAGE_GUARD is a normal, transient Windows mechanism (the guard bit clears itself on
+        // first touch), so it is safe to force through with a temporary protection change.
+        // PAGE_NOACCESS is different: some titles plant small NOACCESS islands inside otherwise
+        // readable executable sections as anti-tamper canaries. Forcing those to
+        // PAGE_EXECUTE_READWRITE has been observed to freeze the process, so by default
+        // aggressive recovery leaves them alone. This can be re-enabled via the
+        // aggressive_read_force_noaccess setting for targets known to not react badly.
+        bool isNoAccess = (mbi.Protect & PAGE_NOACCESS) != 0;
+        bool isGuardOnly = (mbi.Protect & PAGE_GUARD) != 0 && !isNoAccess;
+        bool canForceNoAccess = isNoAccess && ShouldForceReadNoAccessMemory();
+        bool canForce = aggressiveRead && mbi.State == MEM_COMMIT && (isGuardOnly || canForceNoAccess);
+
+        while (regionRemaining > 0) {
+            DWORD step = regionRemaining > kProtectChunkSize ? static_cast<DWORD>(kProtectChunkSize) : static_cast<DWORD>(regionRemaining);
+            SIZE_T stepBytesRead = 0;
+
+            if (readable) {
+                ReadProcessMemory(GetCurrentProcess(), current, out + total, step, &stepBytesRead);
+            } else if (canForce) {
+                TryReadWithTemporaryProtection(current, out + total, step, &stepBytesRead);
+            }
+
+            if (stepBytesRead != step) {
+                *bytesRead = total + stepBytesRead;
+                return false;
+            }
+
+            total += step;
+            current += step;
+            regionRemaining -= step;
+        }
     }
 
-    if (IsReadableMemory(mbi)) {
-        return ReadProcessMemory(GetCurrentProcess(), source, buffer, size, bytesRead) == TRUE && *bytesRead == size;
-    }
-
-    if (aggressiveRead && mbi.State == MEM_COMMIT) {
-        return TryReadWithTemporaryProtection(source, buffer, size, bytesRead) && *bytesRead == size;
-    }
-
-    *bytesRead = 0;
-    return false;
+    *bytesRead = total;
+    return true;
 }
 
 void DumpExecutableRegions(const std::wstring& dumpPath, const std::wstring& logPath, bool aggressiveRead) {
