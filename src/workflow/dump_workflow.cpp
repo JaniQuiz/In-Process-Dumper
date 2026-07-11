@@ -231,9 +231,18 @@ DWORD RunDumpWorkflow(
     LogDumpContext(context, includeProcessId, includeDumpFlags);
 
     DWORD delaySeconds = ParseDumpDelaySeconds();
-    if (delaySeconds > 0) {
+    DWORD dumpKey = ParseDumpKey();
+    if (dumpKey == 0 && delaySeconds > 0) {
         Log(context.logPath, L"Delaying dump start by " + std::to_wstring(delaySeconds) + L" second(s).");
         Sleep(delaySeconds * 1000);
+    }
+
+    if (dumpKey != 0) {
+        while (true) {
+            if (GetAsyncKeyState(dumpKey) & 0x8000) {
+                break;
+            }
+        }
     }
 
     DWORD dumpError = WriteConfiguredDump(context);

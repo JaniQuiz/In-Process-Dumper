@@ -574,6 +574,30 @@ DWORD ParseDumpDelaySeconds() {
     return static_cast<DWORD>(seconds);
 }
 
+DWORD ParseDumpKey() {
+    std::wstring value = GetSettingString(L"IPD_DUMP_KEY", L"dump_key");
+    if (value.empty()) {
+        return 0;
+    }
+
+    wchar_t* end = nullptr;
+    int dumpKey = wcstoul(value.c_str(), &end, 0);
+    if (end == value.c_str()) {
+        return 0;
+    }
+
+    if (dumpKey == 0) {
+        return 0;
+    }
+
+    char keyName[256] = {};
+    LONG lParamValue = MapVirtualKeyA(dumpKey, MAPVK_VK_TO_VSC) << 16;
+    if (GetKeyNameTextA(lParamValue, keyName, sizeof(keyName)) != 0) {
+        printf("Press %s to begin dump\n", keyName);
+    }
+    return static_cast<DWORD>(dumpKey);
+}
+
 DWORD ParseUnityMetadataScanSeconds() {
     std::wstring value = GetSettingString(L"IPD_UNITY_METADATA_SCAN_SECONDS", L"unity_metadata_scan_seconds");
     if (value.empty()) {
