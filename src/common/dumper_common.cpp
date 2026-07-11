@@ -416,7 +416,7 @@ std::wstring BuildLogPath(const std::wstring& dumpPath) {
         return configured;
     }
 
-    return ReplaceFileExtension(dumpPath, L".log.txt");
+    return ReplaceFileExtension(dumpPath, L".log");
 }
 
 std::wstring BuildReconstructedExePath(const std::wstring& dumpPath) {
