@@ -677,14 +677,20 @@ bool WriteReconstructedImage(
         return false;
     }
 
+    // Scylla/x64dbg-style "section aligned" dump: instead of repacking sections into a
+    // fresh file-aligned layout (which requires reconstructing PointerToRawData from
+    // scratch and is easy to get wrong for malformed/packed headers), keep the file
+    // layout identical to the memory layout - PointerToRawData == VirtualAddress - and
+    // set FileAlignment == SectionAlignment. This avoids raw-offset bookkeeping entirely
+    // and matches what disassemblers expect from a memory dump.
     bool ok = true;
     DWORD localError = ERROR_SUCCESS;
     DWORD sizeOfHeaders = nt->OptionalHeader.SizeOfHeaders;
     DWORD sizeOfImage = nt->OptionalHeader.SizeOfImage;
-    DWORD fileAlignment = nt->OptionalHeader.FileAlignment;
+    DWORD sectionAlignment = nt->OptionalHeader.SectionAlignment;
 
-    if (fileAlignment == 0 || fileAlignment > 0x10000 || (fileAlignment & (fileAlignment - 1)) != 0) {
-        fileAlignment = 0x200;
+    if (sectionAlignment == 0 || (sectionAlignment & (sectionAlignment - 1)) != 0) {
+        sectionAlignment = 0x1000;
     }
 
     if (sizeOfHeaders == 0 || sizeOfHeaders > sizeOfImage) {
@@ -700,7 +706,9 @@ bool WriteReconstructedImage(
     IMAGE_NT_HEADERS* mutableNt = nullptr;
     IMAGE_SECTION_HEADER* mutableSection = nullptr;
     if (ok) {
-        if (ntOffset + sizeof(IMAGE_NT_HEADERS) > headers.size()) {
+        size_t sectionsEnd = static_cast<size_t>(ntOffset) + sizeof(IMAGE_NT_HEADERS) +
+            static_cast<size_t>(nt->FileHeader.NumberOfSections) * sizeof(IMAGE_SECTION_HEADER);
+        if (sectionsEnd > headers.size()) {
             ok = false;
             localError = ERROR_BAD_EXE_FORMAT;
         } else {
@@ -709,92 +717,71 @@ bool WriteReconstructedImage(
         }
     }
 
-    DWORD nextRawOffset = AlignUp(sizeOfHeaders, fileAlignment);
-    DWORD finalFileSize = nextRawOffset;
-    for (WORD i = 0; ok && i < nt->FileHeader.NumberOfSections; ++i) {
-        IMAGE_SECTION_HEADER& section = mutableSection[i];
-        DWORD virtualOffset = section.VirtualAddress;
-        DWORD virtualSize = section.Misc.VirtualSize;
-        DWORD oldRawSize = section.SizeOfRawData;
+    WORD validCount = 0;
+    if (ok) {
+        mutableNt->OptionalHeader.FileAlignment = sectionAlignment;
 
-        if (virtualOffset >= sizeOfImage) {
-            continue;
-        }
+        for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+            IMAGE_SECTION_HEADER section = mutableSection[i];
+            DWORD virtualOffset = section.VirtualAddress;
+            DWORD virtualSize = section.Misc.VirtualSize;
+            DWORD oldRawSize = section.SizeOfRawData;
 
-        DWORD nextVirtualOffset = sizeOfImage;
-        for (WORD j = 0; j < nt->FileHeader.NumberOfSections; ++j) {
-            DWORD candidate = mutableSection[j].VirtualAddress;
-            if (candidate > virtualOffset && candidate < nextVirtualOffset) {
-                nextVirtualOffset = candidate;
+            // Sections with a VA past the end of the image are malformed/packer
+            // artifacts; dropping them (rather than keeping stale PointerToRawData
+            // values pointing past the new file's end) is what keeps the output
+            // loadable.
+            if (virtualOffset >= sizeOfImage) {
+                continue;
             }
+
+            DWORD nextVirtualOffset = sizeOfImage;
+            for (WORD j = 0; j < nt->FileHeader.NumberOfSections; ++j) {
+                DWORD candidate = mutableSection[j].VirtualAddress;
+                if (candidate > virtualOffset && candidate < nextVirtualOffset) {
+                    nextVirtualOffset = candidate;
+                }
+            }
+
+            DWORD inferredSize = nextVirtualOffset > virtualOffset ? nextVirtualOffset - virtualOffset : sizeOfImage - virtualOffset;
+            DWORD available = sizeOfImage - virtualOffset;
+            DWORD memorySize = virtualSize;
+            if (memorySize == 0 || oldRawSize > memorySize) {
+                memorySize = oldRawSize;
+            }
+            if (memorySize == 0 || inferredSize > memorySize) {
+                memorySize = inferredSize;
+            }
+            if (available < memorySize) {
+                memorySize = available;
+            }
+
+            section.PointerToRawData = virtualOffset;
+            section.SizeOfRawData = memorySize;
+            section.Misc.VirtualSize = memorySize;
+            mutableSection[validCount] = section;
+            ++validCount;
         }
 
-        DWORD inferredSize = nextVirtualOffset > virtualOffset ? nextVirtualOffset - virtualOffset : sizeOfImage - virtualOffset;
-        DWORD available = sizeOfImage - virtualOffset;
-        DWORD memorySize = virtualSize;
-        if (memorySize == 0 || oldRawSize > memorySize) {
-            memorySize = oldRawSize;
-        }
-        if (memorySize == 0 || inferredSize > memorySize) {
-            memorySize = inferredSize;
-        }
-        if (memorySize == 0) {
-            section.PointerToRawData = 0;
-            section.SizeOfRawData = 0;
-            continue;
-        }
-
-        if (available < memorySize) {
-            memorySize = available;
-        }
-
-        DWORD rawSize = AlignUp(memorySize, fileAlignment);
-        if (rawSize < memorySize || nextRawOffset + rawSize < nextRawOffset) {
-            ok = false;
-            localError = ERROR_BAD_EXE_FORMAT;
-            break;
-        }
-
-        section.PointerToRawData = nextRawOffset;
-        section.SizeOfRawData = rawSize;
-        section.Misc.VirtualSize = memorySize;
-        nextRawOffset += rawSize;
-        finalFileSize = nextRawOffset;
+        mutableNt->FileHeader.NumberOfSections = validCount;
     }
+
+    DWORD finalFileSize = AlignUp(sizeOfImage, sectionAlignment);
 
     if (ok) {
         ok = WriteBufferAt(file, 0, headers.data(), static_cast<DWORD>(headers.size()), &localError);
     }
 
-    mutableSection = ok ? IMAGE_FIRST_SECTION(mutableNt) : nullptr;
-    for (WORD i = 0; ok && i < nt->FileHeader.NumberOfSections; ++i) {
+    for (WORD i = 0; ok && i < validCount; ++i) {
         const IMAGE_SECTION_HEADER& section = mutableSection[i];
         DWORD rawOffset = section.PointerToRawData;
         DWORD rawSize = section.SizeOfRawData;
-        DWORD virtualOffset = section.VirtualAddress;
-        DWORD virtualSize = section.Misc.VirtualSize;
 
-        if (rawOffset == 0 || rawSize == 0 || virtualOffset >= sizeOfImage) {
+        if (rawSize == 0) {
             continue;
         }
 
-        DWORD bytesToCopy = virtualSize == 0 ? rawSize : virtualSize;
-        DWORD available = sizeOfImage - virtualOffset;
-        if (bytesToCopy > available) {
-            bytesToCopy = available;
-        }
-        if (bytesToCopy > rawSize) {
-            bytesToCopy = rawSize;
-        }
-
-        if (bytesToCopy > 0) {
-            ok = WriteImageMemoryAt(file, rawOffset, base + virtualOffset, bytesToCopy, aggressiveRead, stats, &localError);
-        }
-
-        if (ok && rawSize > bytesToCopy) {
-            stats->zeroBytes += rawSize - bytesToCopy;
-            ok = WriteZerosAt(file, rawOffset + bytesToCopy, rawSize - bytesToCopy, &localError);
-        }
+        ok = WriteImageMemoryAt(file, rawOffset, base + rawOffset, rawSize, aggressiveRead, stats, &localError);
     }
 
     if (ok) {
